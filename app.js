@@ -1,15 +1,31 @@
 /* ==========================================================================
    Archive Search — application logic
 
-   Talks to the Internet Archive's public advancedsearch API directly from
-   the browser. Key behaviours:
+   Talks to the Internet Archive's public advancedsearch API from the browser.
 
-   - All user- and API-supplied strings are HTML-escaped before rendering.
+   Fetch routes ("transports")
+   ---------------------------
+   Some environments block direct cross-origin requests (e.g. sandboxed
+   preview iframes with a Content-Security-Policy), even though archive.org
+   itself sends CORS headers. So each search tries several routes in order
+   and remembers the first one that works:
+
+     1. relay      — same-origin /api/search on this repo's server (server.js);
+                     best option when self-hosting (no CORS, no third parties)
+     2. direct     — https://archive.org/advancedsearch.php (works on normal
+                     hosting — archive.org sends Access-Control-Allow-Origin: *)
+     3. corsproxy.io, allorigins.win, codetabs.com — public mirror proxies as
+                     last-resort fallbacks
+
+   Other key behaviours:
+   - All API-supplied strings are HTML-escaped before rendering (no XSS).
    - In-flight requests are aborted when a new one starts (no stale results).
    - HTTP errors, timeouts, malformed payloads and network failures each get
-     a clear, recoverable error state.
+     a clear, recoverable error state with technical details.
    - Search state (query / media type / sort / page) is mirrored in the URL,
      so results are shareable and survive refresh + back/forward.
+   - Anonymous connectivity diagnostics are POSTed to /api/log when server.js
+     is running, which makes connection problems diagnosable.
    ========================================================================== */
 (() => {
     'use strict';
@@ -22,7 +38,9 @@
 
     const PAGE_SIZE = 24;            // results per page
     const SKELETON_COUNT = 12;       // placeholder cards while loading
-    const REQUEST_TIMEOUT_MS = 25000;
+    const REQUEST_TIMEOUT_MS = 45000;     // whole search, every route combined
+    const TRANSPORT_TIMEOUT_MS = 8000;    // per route
+    const PROBE_DELAY_MS = 1200;          // background connectivity check
 
     // Fields requested from the API to keep the payload light.
     const FIELDS = ['identifier', 'title', 'creator', 'mediatype', 'year', 'downloads'];
@@ -58,6 +76,35 @@
         collection: 'Collection',
         etree: 'Live Music',
     };
+
+    /* ---------------- Fetch routes (transports) ---------------- */
+
+    const TRANSPORTS = [
+        { id: 'relay', label: 'local server', build: (u) => '/api/search' + u.slice(u.indexOf('?')) },
+        { id: 'direct', label: 'archive.org', build: (u) => u },
+        { id: 'corsproxy', label: 'corsproxy.io', build: (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u) },
+        { id: 'allorigins', label: 'allorigins.win', build: (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u) },
+        { id: 'codetabs', label: 'codetabs.com', build: (u) => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u) },
+    ];
+
+    let preferredTransport = -1;   // index of the last route that worked
+    try {
+        const saved = parseInt(localStorage.getItem('as-transport'), 10);
+        if (Number.isInteger(saved) && saved >= 0 && saved < TRANSPORTS.length) preferredTransport = saved;
+    } catch (_) { /* storage unavailable in sandboxed iframes */ }
+
+    function rememberTransport(idx) {
+        if (preferredTransport === idx) return;
+        preferredTransport = idx;
+        try { localStorage.setItem('as-transport', String(idx)); } catch (_) { /* ignore */ }
+    }
+
+    function transportOrder() {
+        const order = [];
+        if (preferredTransport >= 0) order.push(preferredTransport);
+        for (let i = 0; i < TRANSPORTS.length; i++) if (i !== preferredTransport) order.push(i);
+        return order;
+    }
 
     /* ---------------- Icons (inline SVG) ---------------- */
 
@@ -101,6 +148,8 @@
         emptyQuery: $('emptyQuery'),
         error: $('errorState'),
         errorMessage: $('errorMessage'),
+        diagDetails: $('diagDetails'),
+        diagOutput: $('diagOutput'),
         retryBtn: $('retryBtn'),
         section: $('results'),
     };
@@ -111,6 +160,49 @@
 
     let currentRequest = null;   // { controller, token, timedOut }
     let requestToken = 0;        // guards against rendering stale responses
+
+    /* ---------------- Diagnostics ---------------- */
+
+    const diag = { cspViolations: [] };
+
+    // Capture CSP blocks (e.g. connect-src forbidding cross-origin fetch) so
+    // they can be shown/reported instead of a generic "Failed to fetch".
+    document.addEventListener('securitypolicyviolation', (e) => {
+        try {
+            diag.cspViolations.push({
+                directive: e.violatedDirective,
+                blocked: String(e.blockedURI || '').slice(0, 200),
+            });
+            if (diag.cspViolations.length > 10) diag.cspViolations.shift();
+        } catch (_) { /* ignore */ }
+    });
+
+    function envSnapshot() {
+        const env = {
+            href: String(location.href || '').slice(0, 300),
+            inIframe: false,
+            online: !!(navigator && navigator.onLine),
+            crossOriginIsolated: !!window.crossOriginIsolated,
+            serviceWorker: !!(navigator && navigator.serviceWorker && navigator.serviceWorker.controller),
+            ua: navigator ? String(navigator.userAgent || '').slice(0, 200) : '',
+            cspViolations: diag.cspViolations.slice(),
+        };
+        try { env.inIframe = window.self !== window.top; } catch (_) { env.inIframe = true; }
+        return env;
+    }
+
+    /** Fire-and-forget report to the local server (no-op on static hosting). */
+    function report(payload) {
+        try {
+            const body = JSON.stringify(payload);
+            if (navigator && typeof navigator.sendBeacon === 'function') {
+                // text/plain keeps it a "simple" request (no CORS preflight,
+                // which matters inside sandboxed iframes with opaque origins).
+                if (navigator.sendBeacon('/api/log', new Blob([body], { type: 'text/plain' }))) return;
+            }
+            fetch('/api/log', { method: 'POST', body, keepalive: true }).catch(() => {});
+        } catch (_) { /* best effort only */ }
+    }
 
     /* ---------------- Utilities ---------------- */
 
@@ -163,6 +255,75 @@
             icon.replace(/^<svg[^>]*>|<\/svg>$/g, '') +
             '</g></svg>';
         return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
+    }
+
+    const errText = (err) => String((err && (err.message || err.name)) || err).slice(0, 200);
+
+    /* ---------------- Fetching ---------------- */
+
+    /** fetch + JSON + per-route timeout, without aborting the global signal. */
+    function fetchWithTimeout(url, signal, ms) {
+        let timer;
+        const timeout = new Promise((_, reject) => {
+            timer = setTimeout(() => {
+                const e = new Error('timed out after ' + ms + ' ms');
+                e.name = 'TimeoutError';
+                reject(e);
+            }, ms);
+        });
+        const request = fetch(url, { signal, redirect: 'follow' })
+            .then((res) => {
+                if (!res.ok) {
+                    const e = new Error('HTTP ' + res.status);
+                    e.status = res.status;
+                    throw e;
+                }
+                return res.json();
+            });
+        request.catch(() => {}); // swallow late rejections after the race is settled
+        return Promise.race([request, timeout]).finally(() => clearTimeout(timer));
+    }
+
+    /**
+     * Try each transport in order until one returns a valid search payload.
+     * Resolves with { data, transport, attempts }; throws with .attempts.
+     */
+    async function fetchSearchData(apiUrl, signal, onProgress) {
+        const order = transportOrder();
+        const attempts = [];
+        let lastError = null;
+
+        for (let n = 0; n < order.length; n++) {
+            const idx = order[n];
+            const transport = TRANSPORTS[idx];
+            attempts.push({ route: transport.id });
+
+            if (onProgress) {
+                try { onProgress(transport, n + 1, order.length); } catch (_) { /* ignore */ }
+            }
+
+            try {
+                const data = await fetchWithTimeout(transport.build(apiUrl), signal, TRANSPORT_TIMEOUT_MS);
+                const resp = data && data.response;
+                if (!resp || !Array.isArray(resp.docs) || typeof resp.numFound !== 'number') {
+                    throw new Error('unexpected response shape');
+                }
+                attempts[attempts.length - 1].ok = true;
+                rememberTransport(idx);
+                return { data, transport, attempts };
+            } catch (err) {
+                if (err && err.name === 'AbortError' && signal && signal.aborted) {
+                    throw err; // the search was superseded — stop trying routes
+                }
+                attempts[attempts.length - 1].error = errText(err);
+                lastError = err;
+            }
+        }
+
+        const err = new Error('all routes failed');
+        err.attempts = attempts;
+        err.lastError = lastError;
+        throw err;
     }
 
     /* ---------------- API ---------------- */
@@ -373,7 +534,11 @@
 
         let message;
         if (err && err.timedOut) {
-            message = 'The search took too long and was cancelled. The Archive may be busy — please try again.';
+            message = 'The search took too long and was cancelled. The Internet Archive may be busy — please try again.';
+        } else if (err && Array.isArray(err.attempts)) {
+            message = 'Couldn\u2019t reach the Internet Archive — all ' + err.attempts.length +
+                ' routes failed (local server, archive.org, and mirror proxies). ' +
+                'Check the technical details below, or try again in a moment.';
         } else if (err && err.status) {
             message = 'The Internet Archive returned an error (HTTP ' + err.status + '). ' +
                 'It may be rate-limiting or temporarily busy — please try again in a moment.';
@@ -381,6 +546,17 @@
             message = 'Couldn\u2019t reach the Internet Archive. Please check your connection and try again.';
         }
         els.errorMessage.textContent = message;
+
+        // Machine-readable details, shown in a collapsed block and reported.
+        const details = {
+            error: errText(err),
+            attempts: (err && err.attempts) || [],
+            environment: envSnapshot(),
+        };
+        els.diagOutput.textContent = JSON.stringify(details, null, 2);
+        els.diagDetails.hidden = false;
+        report({ event: 'search-failed', details });
+
         els.error.hidden = false;
         updateStatus('Search failed');
     }
@@ -470,24 +646,23 @@
         const startedAt = performance.now();
 
         try {
-            const response = await fetch(buildApiUrl(state), { signal: controller.signal });
-
-            if (!response.ok) {
-                const err = new Error('HTTP ' + response.status);
-                err.status = response.status;
-                throw err;
-            }
-
-            const data = await response.json();
-            const resp = data && data.response;
-            if (!resp || !Array.isArray(resp.docs) || typeof resp.numFound !== 'number') {
-                throw new Error('Malformed response');
-            }
+            const result = await fetchSearchData(
+                buildApiUrl(state),
+                controller.signal,
+                (transport, n, total) => {
+                    if (n > 1) {
+                        updateStatus('Searching for \u201C' + esc(query) + '\u201D\u2026 ' +
+                            '(route ' + n + '/' + total + ': ' + esc(transport.label) + ')');
+                    }
+                }
+            );
 
             if (token !== requestToken) return; // a newer search superseded this one
 
             const elapsed = (performance.now() - startedAt) / 1000;
+            const resp = result.data.response;
             renderResults(resp.docs, resp.numFound, elapsed);
+            report({ event: 'search-ok', route: result.transport.id, ms: Math.round(elapsed * 1000), page: state.page });
         } catch (err) {
             if (token !== requestToken) return;            // superseded — ignore quietly
             if (err && err.name === 'AbortError') {
@@ -499,6 +674,61 @@
             clearTimeout(timer);
             if (token === requestToken) setLoading(false);
         }
+    }
+
+    /* ---------------- Background connectivity probe ---------------- */
+
+    let probeStarted = false;
+    function startConnectionProbe() {
+        if (probeStarted) return;
+        probeStarted = true;
+
+        const probe = async () => {
+            try {
+                const out = { event: 'probe', environment: envSnapshot() };
+
+                // 1. same-origin server check
+                try {
+                    await fetchWithTimeout('/api/ping', undefined, 6000);
+                    out.ping = 'ok';
+                } catch (err) {
+                    out.ping = errText(err);
+                }
+
+                // 2. archive.org routes (stop at the first one that works)
+                out.routes = [];
+                const probeUrl = API_URL + '?q=test&rows=0&output=json';
+                for (const idx of transportOrder()) {
+                    const transport = TRANSPORTS[idx];
+                    try {
+                        const data = await fetchWithTimeout(transport.build(probeUrl), undefined, 7000);
+                        if (!(data && data.response)) throw new Error('unexpected response shape');
+                        out.routes.push({ route: transport.id, ok: true });
+                        rememberTransport(idx);
+                        break;
+                    } catch (err) {
+                        out.routes.push({ route: transport.id, error: errText(err) });
+                    }
+                }
+
+                // 3. can cross-origin images load at all? (COEP / img-src check)
+                if (typeof Image !== 'undefined') {
+                    out.image = await new Promise((resolve) => {
+                        let settled = false;
+                        const finish = (v) => { if (!settled) { settled = true; resolve(v); } };
+                        const imgTimer = setTimeout(() => finish('timeout'), 7000);
+                        const img = new Image();
+                        img.onload = () => { clearTimeout(imgTimer); finish('ok'); };
+                        img.onerror = () => { clearTimeout(imgTimer); finish('error'); };
+                        img.src = 'https://archive.org/favicon.ico';
+                    });
+                }
+
+                report(out);
+            } catch (_) { /* never disturb the page */ }
+        };
+
+        setTimeout(() => { probe().catch(() => {}); }, PROBE_DELAY_MS);
     }
 
     /* ---------------- Events ---------------- */
@@ -614,6 +844,7 @@
 
     applyTheme(document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
     readStateFromURL();
+    startConnectionProbe();
 
     // Deep link: ?q=… restores the previous search.
     if (state.query) {

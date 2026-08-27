@@ -563,6 +563,34 @@ kbd {
 .state-icon-error { background: rgba(248, 113, 113, 0.14); color: var(--danger); }
 .state h2 { margin: 0 0 8px; font-size: 1.25rem; }
 .state p { margin: 0; color: var(--text-muted); }
+
+.diag-details {
+    margin-top: 20px;
+    text-align: left;
+}
+.diag-details summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    user-select: none;
+}
+.diag-details summary:hover { color: var(--text); }
+.diag-output {
+    margin: 10px 0 0;
+    padding: 12px;
+    max-height: 240px;
+    overflow: auto;
+    border-radius: 8px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.72rem;
+    line-height: 1.55;
+    color: var(--text-muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+    text-align: left;
+}
 .state-actions {
     margin-top: 22px;
     display: flex;

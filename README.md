@@ -10,10 +10,32 @@ or serve the folder statically and it just works.
 ## Run it
 
 ```bash
-# any static file server works, e.g.
-python3 -m http.server 8080
-# then open http://localhost:8080
+node server.js        # http://0.0.0.0:8080  (recommended — see below)
 ```
+
+The site also works from any static file server (e.g. `python3 -m http.server`),
+but `server.js` adds:
+
+- **`GET /api/search`** — a same-origin relay to archive.org, so the page can
+  search with zero CORS and no third-party proxies when the server has
+  internet access
+- **`POST /api/log`** — anonymous connectivity diagnostics from the page
+  (written to `diagnostics.log`, which is gitignored) to make "can't search"
+  problems diagnosable
+
+## How searching works (multi-route fallback)
+
+Some environments (notably sandboxed preview iframes) block cross-origin
+`fetch` even though archive.org itself sends CORS headers. Each search
+therefore tries several routes in order and remembers the first that works:
+
+1. `relay` — same-origin `/api/search` on `server.js` (best when self-hosting)
+2. `direct` — `https://archive.org/advancedsearch.php`
+3. mirror proxies as last resort: `corsproxy.io`, `allorigins.win`, `codetabs.com`
+
+If every route fails, the error state shows exactly which routes were tried
+and why (including any Content-Security-Policy violations), and reports the
+same details to `/api/log` when the app server is running.
 
 ## Features
 
@@ -35,6 +57,7 @@ python3 -m http.server 8080
 | `index.html`  | Markup and page structure                |
 | `styles.css`  | Design system (themes, layout, states)   |
 | `app.js`      | Search logic, rendering, state, routing  |
+| `server.js`   | Zero-dependency Node server (static + API relay + diagnostics) |
 | `favicon.svg` | Site icon                                |
 
 ## Notable correctness details

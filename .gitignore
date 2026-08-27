@@ -1,0 +1,9 @@
+# Runtime diagnostics written by server.js (contains user-reported environment data)
+diagnostics.log
+
+# Node
+node_modules/
+
+# OS junk
+.DS_Store
+Thumbs.db
