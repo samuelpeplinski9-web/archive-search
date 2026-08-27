@@ -1,196 +1,182 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Archive.org Search Engine</title>
-    <style>
-        :root {
-            --bg-color: #121212;
-            --surface-color: #1e1e1e;
-            --text-color: #e0e0e0;
-            --primary-color: #bb86fc;
-            --border-color: #333;
-        }
-        body {
-            font-family: system-ui, -apple-system, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            max-width: 1000px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        header {
-            text-align: center;
-            margin-bottom: 40px;
-        }
-        .search-container {
-            display: flex;
-            gap: 10px;
-            justify-content: center;
-        }
-        input {
-            padding: 12px 20px;
-            font-size: 16px;
-            border-radius: 8px;
-            border: 1px solid var(--border-color);
-            background: var(--surface-color);
-            color: var(--text-color);
-            width: 100%;
-            max-width: 500px;
-        }
-        button {
-            padding: 12px 24px;
-            font-size: 16px;
-            border-radius: 8px;
-            border: none;
-            background: var(--primary-color);
-            color: #000;
-            cursor: pointer;
-            font-weight: bold;
-            transition: opacity 0.2s;
-        }
-        button:hover { opacity: 0.8; }
-        
-        .loading {
-            text-align: center;
-            display: none;
-            margin: 20px 0;
-            color: var(--primary-color);
-        }
-        
-        .results-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-            gap: 20px;
-            margin-top: 30px;
-        }
-        
-        .card {
-            background: var(--surface-color);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            transition: transform 0.2s;
-        }
-        .card:hover { transform: translateY(-4px); }
-        .card img {
-            width: 100%;
-            height: 180px;
-            object-fit: cover;
-            background: #000;
-        }
-        .card-content {
-            padding: 15px;
-            flex-grow: 1;
-            display: flex;
-            flex-direction: column;
-        }
-        .card-title {
-            font-size: 1.1em;
-            margin: 0 0 10px 0;
-            font-weight: bold;
-            line-height: 1.4;
-        }
-        .card-meta {
-            font-size: 0.85em;
-            color: #888;
-            margin-bottom: 15px;
-        }
-        .card-link {
-            margin-top: auto;
-            text-decoration: none;
-            background: #333;
-            color: #fff;
-            padding: 8px 12px;
-            border-radius: 6px;
-            text-align: center;
-            font-size: 0.9em;
-        }
-        .card-link:hover { background: #444; }
-    </style>
+    <title>Archive Search — Search the Internet Archive</title>
+    <meta name="description" content="A fast, clean way to search the Internet Archive: books, movies, music, software, images and data.">
+    <meta name="color-scheme" content="dark light">
+    <meta property="og:title" content="Archive Search">
+    <meta property="og:description" content="Search millions of books, movies, music and software from the Internet Archive.">
+    <meta property="og:type" content="website">
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+    <script>
+        /* Apply the saved (or system) theme before first paint to avoid a flash
+           of the wrong colors. Runs before the stylesheet is ever rendered. */
+        (function () {
+            try {
+                var saved = localStorage.getItem('as-theme');
+                var theme = saved === 'light' || saved === 'dark'
+                    ? saved
+                    : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+                document.documentElement.dataset.theme = theme;
+            } catch (e) {
+                document.documentElement.dataset.theme = 'dark';
+            }
+        })();
+    </script>
 </head>
 <body>
+    <a class="skip-link" href="#results">Skip to results</a>
 
-    <header>
-        <h1>Archive Engine</h1>
-        <p>Search the Internet Archive directly from your browser</p>
-        <form class="search-container" id="searchForm">
-            <input type="text" id="searchInput" placeholder="Search for audio, video, software, texts..." required>
-            <button type="submit">Search</button>
-        </form>
+    <!-- ============ Header / persistent search ============ -->
+    <header class="site-header">
+        <div class="container header-inner">
+            <a class="brand" href="./" id="brandHome" aria-label="Archive Search — home">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polyline points="21 8 21 21 3 21 3 8"></polyline>
+                    <rect x="1" y="3" width="22" height="5"></rect>
+                    <line x1="10" y1="12" x2="14" y2="12"></line>
+                </svg>
+                <span>Archive<b>Search</b></span>
+            </a>
+
+            <form id="searchForm" class="search-form" role="search" aria-label="Search the Internet Archive" autocomplete="off">
+                <div class="search-box">
+                    <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    <label class="visually-hidden" for="searchInput">Search the Internet Archive</label>
+                    <input id="searchInput" type="search" name="q" placeholder="Search books, movies, music, software…" spellcheck="false">
+                    <button type="button" id="clearBtn" class="clear-btn" aria-label="Clear search" hidden>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                    <button type="submit" id="searchBtn" class="btn btn-primary">
+                        <span class="btn-spinner" hidden aria-hidden="true"></span>
+                        <span class="btn-label">Search</span>
+                    </button>
+                </div>
+            </form>
+
+            <button type="button" id="themeToggle" class="icon-btn" aria-label="Switch to light theme">
+                <span class="theme-icon theme-icon-moon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                </span>
+                <span class="theme-icon theme-icon-sun" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                </span>
+            </button>
+        </div>
     </header>
 
-    <div class="loading" id="loading">Fetching records from Archive.org...</div>
-    <div class="results-grid" id="resultsGrid"></div>
+    <main id="main" class="container">
+        <!-- ============ Landing (shown before the first search) ============ -->
+        <section id="landing" class="landing">
+            <div class="landing-inner">
+                <p class="landing-badge">Powered by the Internet Archive&rsquo;s public API</p>
+                <h1>Explore humanity&rsquo;s <span class="grad">public library</span></h1>
+                <p class="landing-sub">Search millions of books, movies, music recordings, software titles and
+                    more — free, right in your browser.</p>
+                <div class="examples">
+                    <p class="examples-label">Try searching for</p>
+                    <div class="example-chips">
+                        <button type="button" class="chip example" data-query="Apollo 11">Apollo 11</button>
+                        <button type="button" class="chip example" data-query="Grateful Dead">Grateful Dead</button>
+                        <button type="button" class="chip example" data-query="Night of the Living Dead">Night of the Living Dead</button>
+                        <button type="button" class="chip example" data-query="MS-DOS">MS-DOS</button>
+                        <button type="button" class="chip example" data-query="1940s jazz">1940s jazz</button>
+                    </div>
+                </div>
+                <p class="landing-hint">Tip: press <kbd>/</kbd> anywhere to jump to the search box.</p>
+            </div>
+        </section>
 
-    <script>
-        const form = document.getElementById('searchForm');
-        const input = document.getElementById('searchInput');
-        const grid = document.getElementById('resultsGrid');
-        const loading = document.getElementById('loading');
+        <!-- ============ Results ============ -->
+        <section id="results" class="results-section" aria-label="Search results">
+            <p id="status" class="status" role="status" aria-live="polite"></p>
 
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const query = input.value.trim();
-            if (!query) return;
+            <div id="toolbar" class="toolbar" hidden>
+                <div class="chip-group" id="typeGroup" role="group" aria-label="Filter by media type">
+                    <button type="button" class="chip" data-type="all" aria-pressed="true">All</button>
+                    <button type="button" class="chip" data-type="audio" aria-pressed="false">Audio</button>
+                    <button type="button" class="chip" data-type="video" aria-pressed="false">Video</button>
+                    <button type="button" class="chip" data-type="books" aria-pressed="false">Books</button>
+                    <button type="button" class="chip" data-type="software" aria-pressed="false">Software</button>
+                    <button type="button" class="chip" data-type="images" aria-pressed="false">Images</button>
+                    <button type="button" class="chip" data-type="data" aria-pressed="false">Data</button>
+                </div>
+                <div class="sort-wrap">
+                    <label for="sortSelect">Sort by</label>
+                    <select id="sortSelect">
+                        <option value="relevance">Relevance</option>
+                        <option value="downloads">Most downloaded</option>
+                        <option value="added">Recently added</option>
+                        <option value="yearNew">Year — newest</option>
+                        <option value="yearOld">Year — oldest</option>
+                    </select>
+                </div>
+            </div>
 
-            grid.innerHTML = '';
-            loading.style.display = 'block';
+            <div id="resultsGrid" class="results-grid" aria-label="Search results"></div>
 
-            try {
-                // Construct the Archive.org Advanced Search API URL
-                // We request specific fields (fl[]) to keep the payload lightweight
-                const fields = 'identifier,title,creator,mediatype,year';
-                const url = `https://archive.org/advancedsearch.php?q=${encodeURIComponent(query)}&fl[]=${fields.split(',').join('&fl[]=')}&rows=50&output=json`;
+            <!-- Empty state -->
+            <div id="emptyState" class="state" hidden>
+                <div class="state-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                </div>
+                <h2>No results found</h2>
+                <p>Nothing matched <strong id="emptyQuery"></strong>. Try different keywords, check the spelling, or remove filters.</p>
+                <div class="state-actions">
+                    <button type="button" class="chip example" data-query="old time radio">old time radio</button>
+                    <button type="button" class="chip example" data-query="vintage cartoons">vintage cartoons</button>
+                    <button type="button" class="chip example" data-query="NASA">NASA</button>
+                </div>
+            </div>
 
-                const response = await fetch(url);
-                const data = await response.json();
-                
-                loading.style.display = 'none';
-                
-                const docs = data.response.docs;
-                if (docs.length === 0) {
-                    grid.innerHTML = '<p style="grid-column: 1/-1; text-align: center;">No results found.</p>';
-                    return;
-                }
+            <!-- Error state -->
+            <div id="errorState" class="state" hidden>
+                <div class="state-icon state-icon-error" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                        <line x1="12" y1="9" x2="12" y2="13"></line>
+                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                </div>
+                <h2>Something went wrong</h2>
+                <p id="errorMessage"></p>
+                <div class="state-actions">
+                    <button type="button" id="retryBtn" class="btn btn-primary">Try again</button>
+                </div>
+            </div>
 
-                docs.forEach(item => {
-                    const card = document.createElement('div');
-                    card.className = 'card';
-                    
-                    const title = item.title || 'Untitled';
-                    const creator = item.creator ? (Array.isArray(item.creator) ? item.creator[0] : item.creator) : 'Unknown Creator';
-                    const year = item.year || 'Unknown Year';
-                    const type = item.mediatype || 'unknown';
-                    
-                    // Uses the thumbnail API
-                    const imgUrl = `https://archive.org/services/img/${item.identifier}`;
-                    // Link directly to the item's detail page
-                    const itemUrl = `https://archive.org/details/${item.identifier}`;
+            <nav id="pagination" class="pagination" aria-label="Search results pages" hidden></nav>
+        </section>
+    </main>
 
-                    card.innerHTML = `
-                        <img src="${imgUrl}" alt="Thumbnail" loading="lazy" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiMzMzMiLz48L3N2Zz4='">
-                        <div class="card-content">
-                            <h3 class="card-title">${title}</h3>
-                            <div class="card-meta">
-                                <div>Type: ${type}</div>
-                                <div>By: ${creator}</div>
-                                <div>Year: ${year}</div>
-                            </div>
-                            <a href="${itemUrl}" target="_blank" class="card-link">View Details</a>
-                        </div>
-                    `;
-                    grid.appendChild(card);
-                });
+    <footer class="site-footer">
+        <div class="container footer-inner">
+            <p>Built on the <a href="https://archive.org/advancedsearch.php" target="_blank" rel="noopener noreferrer">Internet Archive&rsquo;s public search API</a>.
+                An independent project — not affiliated with archive.org.</p>
+            <nav class="footer-links" aria-label="Internet Archive links">
+                <a href="https://archive.org" target="_blank" rel="noopener noreferrer">archive.org</a>
+                <a href="https://archive.org/donate" target="_blank" rel="noopener noreferrer">Donate</a>
+                <a href="https://archive.org/about" target="_blank" rel="noopener noreferrer">About</a>
+            </nav>
+        </div>
+    </footer>
 
-            } catch (error) {
-                loading.style.display = 'none';
-                grid.innerHTML = `<p style="grid-column: 1/-1; color: #ff5555;">Error fetching data: ${error.message}</p>`;
-            }
-        });
-    </script>
+    <noscript>
+        <div class="noscript-note">This search engine needs JavaScript to query the Internet Archive.</div>
+    </noscript>
+
+    <script src="app.js"></script>
 </body>
 </html>
